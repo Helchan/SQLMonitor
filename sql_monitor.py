@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.12"
+APP_VERSION = "v1.0.13"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -39,11 +39,14 @@ SCROLL_BOTTOM_THRESHOLD = 0.999
 STATUS_ANIMATION_MS = 120
 STATUS_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 TIMESTAMP_RE = re.compile(r"^\s*(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\b\s*(?P<body>.*)$")
-DIRECT_PRINT_KEYWORDS = [
-    "sql id",
-    "sqlId",
-    "statement id",
-    "MappedStatement",
+DIRECT_PRINT_KEYWORDS: list[str] = [
+    r"sql\s*id",
+    r"sqlId",
+    r"statement\s*id",
+    r"MappedStatement",
+]
+DIRECT_PRINT_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(pattern, re.IGNORECASE) for pattern in DIRECT_PRINT_KEYWORDS
 ]
 WUSHAN_EXCLUDE_KEYWORDS: list[str] = [
     "wushan_",
@@ -403,8 +406,7 @@ class SqlLogParser:
             self.put_event(("direct", f"{timestamp} {normalized}"))
 
     def should_print_directly(self, line: str) -> bool:
-        lowered_line = line.lower()
-        return any(keyword.lower() in lowered_line for keyword in DIRECT_PRINT_KEYWORDS)
+        return any(pattern.search(line) for pattern in DIRECT_PRINT_PATTERNS)
 
     def put_event(self, event: tuple[str, str]) -> None:
         try:
