@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.11"
+APP_VERSION = "v1.0.12"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -92,6 +92,7 @@ THEMES = {
         "search_current_bg": "#ffcc66",
         "search_current_fg": "#111111",
         "timestamp_fg": "#6a737d",
+        "direct_print_fg": "#795548",
         "sql_keyword_fg": "#0033b3",
         "sql_type_fg": "#00627a",
         "sql_function_fg": "#7a3e9d",
@@ -130,6 +131,7 @@ THEMES = {
         "search_current_bg": "#4a4029",
         "search_current_fg": "#b6aa90",
         "timestamp_fg": "#6f8f66",
+        "direct_print_fg": "#9b8f78",
         "sql_keyword_fg": "#5f7f9f",
         "sql_type_fg": "#608f88",
         "sql_function_fg": "#9d9066",
@@ -398,7 +400,7 @@ class SqlLogParser:
     def emit_direct_line(self, timestamp: str, line: str) -> None:
         normalized = " ".join(line.split())
         if normalized:
-            self.put_event(("sql", f"{timestamp} {normalized}"))
+            self.put_event(("direct", f"{timestamp} {normalized}"))
 
     def should_print_directly(self, line: str) -> bool:
         lowered_line = line.lower()
@@ -983,6 +985,8 @@ class SQLMonitorApp(tk.Tk):
                     break
                 if event_type == "sql":
                     self.append_sql(text)
+                elif event_type == "direct":
+                    self.append_direct_log(text)
                 self.event_queue.task_done()
         self.after(POLL_MS, self.poll_events)
 
@@ -996,6 +1000,31 @@ class SQLMonitorApp(tk.Tk):
         if should_follow:
             self.sql_text.see("end")
             self.auto_scroll = True
+
+    def append_direct_log(self, text: str) -> None:
+        should_follow = self.auto_scroll or self.is_sql_scrolled_to_bottom()
+        self.log_count += 1
+        self.insert_direct_record(text)
+        self.trim_sql_output()
+        if self.search_var.get():
+            self.highlight_search(focus_first=False)
+        if should_follow:
+            self.sql_text.see("end")
+            self.auto_scroll = True
+
+    def insert_direct_record(self, text: str) -> None:
+        match = TIMESTAMP_RE.match(text)
+        if not match:
+            self.sql_text.insert("end", text, ("direct_print",))
+            self.sql_text.insert("end", "\n\n")
+            return
+
+        timestamp = match.group("timestamp")
+        body = match.group("body")
+        self.sql_text.insert("end", timestamp, ("timestamp",))
+        self.sql_text.insert("end", " ")
+        self.sql_text.insert("end", body, ("direct_print",))
+        self.sql_text.insert("end", "\n\n")
 
     def insert_sql_record(self, text: str) -> None:
         match = TIMESTAMP_RE.match(text)
@@ -1143,6 +1172,7 @@ class SQLMonitorApp(tk.Tk):
     def configure_text_tags(self) -> None:
         theme = THEMES.get(self.theme_name, THEMES["light"])
         self.sql_text.tag_configure("timestamp", foreground=theme["timestamp_fg"])
+        self.sql_text.tag_configure("direct_print", foreground=theme["direct_print_fg"])
         self.sql_text.tag_configure("sql_keyword", foreground=theme["sql_keyword_fg"])
         self.sql_text.tag_configure("sql_type", foreground=theme["sql_type_fg"])
         self.sql_text.tag_configure("sql_function", foreground=theme["sql_function_fg"])
