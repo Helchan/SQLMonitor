@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.1"
+APP_VERSION = "v1.0.2"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -45,6 +45,25 @@ DIRECT_PRINT_KEYWORDS = [
     "statement id",
     "MappedStatement",
 ]
+
+SQL_KEYWORDS = {
+    "ADD", "ALL", "ALTER", "AND", "ANY", "AS", "ASC", "BETWEEN", "BY", "CASE", "CHECK",
+    "COLUMN", "CONSTRAINT", "CREATE", "CROSS", "DATABASE", "DEFAULT", "DELETE", "DESC",
+    "DISTINCT", "DROP", "ELSE", "END", "EXISTS", "FALSE", "FOREIGN", "FROM", "FULL",
+    "GROUP", "HAVING", "IN", "INDEX", "INNER", "INSERT", "INTERSECT", "INTO", "IS", "JOIN",
+    "KEY", "LEFT", "LIKE", "LIMIT", "NOT", "NULL", "ON", "OR", "ORDER", "OUTER", "PRIMARY",
+    "REFERENCES", "RIGHT", "SELECT", "SET", "TABLE", "THEN", "TRUE", "UNION", "UNIQUE",
+    "UPDATE", "VALUES", "WHEN", "WHERE", "WITH",
+}
+SQL_TYPES = {
+    "BIGINT", "BINARY", "BIT", "BLOB", "BOOLEAN", "CHAR", "CLOB", "DATE", "DATETIME",
+    "DECIMAL", "DOUBLE", "FLOAT", "INT", "INTEGER", "JSON", "LONGTEXT", "NUMERIC", "REAL",
+    "SMALLINT", "TEXT", "TIME", "TIMESTAMP", "TINYINT", "VARCHAR",
+}
+SQL_FUNCTIONS = {
+    "AVG", "CAST", "COALESCE", "COUNT", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
+    "IFNULL", "LOWER", "MAX", "MIN", "NOW", "NVL", "SUM", "TRIM", "UPPER",
+}
 
 THEMES = {
     "light": {
@@ -69,6 +88,16 @@ THEMES = {
         "search_fg": "#111111",
         "search_current_bg": "#ffcc66",
         "search_current_fg": "#111111",
+        "timestamp_fg": "#6a737d",
+        "sql_keyword_fg": "#0033b3",
+        "sql_type_fg": "#00627a",
+        "sql_function_fg": "#7a3e9d",
+        "sql_string_fg": "#067d17",
+        "sql_number_fg": "#1750eb",
+        "sql_comment_fg": "#8c8c8c",
+        "sql_operator_fg": "#9a6700",
+        "menu_active_bg": "#dbeafe",
+        "menu_active_fg": "#111111",
         "link": "#0b63ce",
     },
     "dark": {
@@ -94,6 +123,16 @@ THEMES = {
         "search_fg": "#ffffff",
         "search_current_bg": "#b7791f",
         "search_current_fg": "#ffffff",
+        "timestamp_fg": "#6e7681",
+        "sql_keyword_fg": "#cf8e6d",
+        "sql_type_fg": "#56a8f5",
+        "sql_function_fg": "#dcdcaa",
+        "sql_string_fg": "#6aab73",
+        "sql_number_fg": "#2aacb8",
+        "sql_comment_fg": "#7a7e85",
+        "sql_operator_fg": "#b9c0c9",
+        "menu_active_bg": "#2f3847",
+        "menu_active_fg": "#f0f6fc",
         "link": "#58a6ff",
     },
 }
@@ -532,7 +571,7 @@ class SQLMonitorApp(tk.Tk):
         self.add_label(label_frame, "SQL输出窗口").pack(anchor="w")
         self.sql_text = self.create_scrolled_text(row=2)
         self.create_output_menu()
-        self.configure_search_tags()
+        self.configure_text_tags()
         self.build_status_bar()
 
     def build_status_bar(self) -> None:
@@ -669,7 +708,7 @@ class SQLMonitorApp(tk.Tk):
         return link
 
     def create_output_menu(self) -> None:
-        self.output_menu = tk.Menu(self.sql_text, tearoff=0)
+        self.output_menu = tk.Menu(self.sql_text, tearoff=0, borderwidth=0, activeborderwidth=0, relief="flat")
         self.output_menu.add_command(label="搜索", command=lambda: self.open_search(None))
         self.output_menu.add_command(label="清空", command=self.clear_sql_output)
         self.sql_text.bind("<Button-3>", self.show_output_menu)
@@ -754,13 +793,125 @@ class SQLMonitorApp(tk.Tk):
     def append_sql(self, sql: str) -> None:
         should_follow = self.auto_scroll or self.is_sql_scrolled_to_bottom()
         self.log_count += 1
-        self.sql_text.insert("end", f"{sql}\n\n")
+        self.insert_sql_record(sql)
         self.trim_sql_output()
         if self.search_var.get():
             self.highlight_search(focus_first=False)
         if should_follow:
             self.sql_text.see("end")
             self.auto_scroll = True
+
+    def insert_sql_record(self, text: str) -> None:
+        match = TIMESTAMP_RE.match(text)
+        if not match:
+            self.insert_sql_body(text)
+            self.sql_text.insert("end", "\n\n")
+            return
+
+        timestamp = match.group("timestamp")
+        body = match.group("body")
+        self.sql_text.insert("end", timestamp, ("timestamp",))
+        self.sql_text.insert("end", " ")
+        self.insert_sql_body(body)
+        self.sql_text.insert("end", "\n\n")
+
+    def insert_sql_body(self, sql: str) -> None:
+        for segment, tag in self.tokenize_sql(sql):
+            if tag:
+                self.sql_text.insert("end", segment, (tag,))
+            else:
+                self.sql_text.insert("end", segment)
+
+    def tokenize_sql(self, sql: str):
+        index = 0
+        length = len(sql)
+        while index < length:
+            char = sql[index]
+            nxt = sql[index + 1] if index + 1 < length else ""
+
+            if char.isspace():
+                start = index
+                while index < length and sql[index].isspace():
+                    index += 1
+                yield sql[start:index], ""
+                continue
+
+            if char == "-" and nxt == "-":
+                yield sql[index:], "sql_comment"
+                break
+
+            if char == "/" and nxt == "*":
+                end = sql.find("*/", index + 2)
+                if end == -1:
+                    yield sql[index:], "sql_comment"
+                    break
+                yield sql[index:end + 2], "sql_comment"
+                index = end + 2
+                continue
+
+            if char in {"'", '"'}:
+                start = index
+                quote = char
+                index += 1
+                while index < length:
+                    current = sql[index]
+                    next_char = sql[index + 1] if index + 1 < length else ""
+                    if current == quote:
+                        if quote == "'" and next_char == "'":
+                            index += 2
+                            continue
+                        index += 1
+                        break
+                    if current == "\\" and index + 1 < length:
+                        index += 2
+                        continue
+                    index += 1
+                yield sql[start:index], "sql_string"
+                continue
+
+            if char == "`":
+                start = index
+                index += 1
+                while index < length:
+                    if sql[index] == "`":
+                        index += 1
+                        break
+                    index += 1
+                yield sql[start:index], "sql_string"
+                continue
+
+            if char.isdigit() or (char == "." and nxt.isdigit()):
+                start = index
+                index += 1
+                while index < length and (sql[index].isalnum() or sql[index] in "."):
+                    index += 1
+                yield sql[start:index], "sql_number"
+                continue
+
+            if char.isalpha() or char == "_":
+                start = index
+                index += 1
+                while index < length and (sql[index].isalnum() or sql[index] in "_$"):
+                    index += 1
+                word = sql[start:index]
+                upper_word = word.upper()
+                tag = ""
+                if upper_word in SQL_KEYWORDS:
+                    tag = "sql_keyword"
+                elif upper_word in SQL_TYPES:
+                    tag = "sql_type"
+                elif upper_word in SQL_FUNCTIONS:
+                    tag = "sql_function"
+                yield word, tag
+                continue
+
+            if char in "=<>!+-*/%,.;()[]{}":
+                yield char, "sql_operator"
+                index += 1
+                continue
+
+            yield char, ""
+            index += 1
 
     def trim_sql_output(self) -> None:
         limit = self.get_max_log_count()
@@ -793,8 +944,16 @@ class SQLMonitorApp(tk.Tk):
         except tk.TclError:
             return True
 
-    def configure_search_tags(self) -> None:
+    def configure_text_tags(self) -> None:
         theme = THEMES.get(self.theme_name, THEMES["light"])
+        self.sql_text.tag_configure("timestamp", foreground=theme["timestamp_fg"])
+        self.sql_text.tag_configure("sql_keyword", foreground=theme["sql_keyword_fg"])
+        self.sql_text.tag_configure("sql_type", foreground=theme["sql_type_fg"])
+        self.sql_text.tag_configure("sql_function", foreground=theme["sql_function_fg"])
+        self.sql_text.tag_configure("sql_string", foreground=theme["sql_string_fg"])
+        self.sql_text.tag_configure("sql_number", foreground=theme["sql_number_fg"])
+        self.sql_text.tag_configure("sql_comment", foreground=theme["sql_comment_fg"])
+        self.sql_text.tag_configure("sql_operator", foreground=theme["sql_operator_fg"])
         self.sql_text.tag_configure(
             "search_match",
             background=theme["search_bg"],
@@ -805,6 +964,8 @@ class SQLMonitorApp(tk.Tk):
             background=theme["search_current_bg"],
             foreground=theme["search_current_fg"],
         )
+        self.sql_text.tag_raise("search_match")
+        self.sql_text.tag_raise("search_current")
 
     def open_search(self, event: tk.Event | None) -> str:
         if self.search_window and self.search_window.winfo_exists():
@@ -949,10 +1110,20 @@ class SQLMonitorApp(tk.Tk):
             else:
                 self.safe_configure(widget, bg=theme["panel"], fg=theme["fg"])
 
-        self.configure_search_tags()
+        self.configure_text_tags()
         self.theme_link.configure(fg=theme["link"])
         self.latest_link.configure(fg=theme["link"])
-        self.safe_configure(self.output_menu, bg=theme["panel"], fg=theme["fg"], activebackground=theme["button_bg"])
+        self.safe_configure(
+            self.output_menu,
+            bg=theme["panel"],
+            fg=theme["fg"],
+            activebackground=theme.get("menu_active_bg", theme["button_bg"]),
+            activeforeground=theme.get("menu_active_fg", theme["fg"]),
+            disabledforeground=theme.get("button_disabled_fg", theme["muted_fg"]),
+            borderwidth=0,
+            activeborderwidth=0,
+            relief="flat",
+        )
         if self.search_window and self.search_window.winfo_exists():
             self.search_window.configure(bg=theme["panel"])
             self.apply_window_appearance(self.search_window)
