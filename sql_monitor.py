@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.6"
+APP_VERSION = "v1.0.7"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -45,12 +45,8 @@ DIRECT_PRINT_KEYWORDS = [
     "statement id",
     "MappedStatement",
 ]
-WUSHAN_EXCLUDE_PATTERN_TEXTS: list[str] = [
-    r"^==>  Preparing:",
-    r"^==> Parameters:",
-]
-WUSHAN_EXCLUDE_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(pattern) for pattern in WUSHAN_EXCLUDE_PATTERN_TEXTS
+WUSHAN_EXCLUDE_KEYWORDS: list[str] = [
+    "wushan_",
 ]
 
 SQL_KEYWORDS = {
@@ -472,7 +468,7 @@ class Analyzer(threading.Thread):
     def should_exclude(self, line: str) -> bool:
         if not self.is_wushan_exclude_enabled():
             return False
-        return any(pattern.search(line) for pattern in WUSHAN_EXCLUDE_PATTERNS)
+        return any(keyword in line for keyword in WUSHAN_EXCLUDE_KEYWORDS)
 
     def is_wushan_exclude_enabled(self) -> bool:
         if not self.wushan_exclude_enabled_provider:
@@ -830,15 +826,56 @@ class SQLMonitorApp(tk.Tk):
         return link
 
     def create_output_menu(self) -> None:
-        self.output_menu = tk.Menu(self.sql_text, tearoff=0, borderwidth=1, activeborderwidth=0, relief="solid")
-        self.output_menu.add_command(label="搜索", command=lambda: self.open_search(None))
-        self.output_menu.add_command(label="清空", command=self.clear_sql_output)
+        self.output_menu_popup: tk.Toplevel | None = None
         self.sql_text.bind("<Button-3>", self.show_output_menu)
         self.sql_text.bind("<Button-2>", self.show_output_menu)
         self.sql_text.bind("<Control-Button-1>", self.show_output_menu)
 
     def show_output_menu(self, event: tk.Event) -> None:
-        self.output_menu.tk_popup(event.x_root, event.y_root)
+        self.close_output_menu()
+        theme = THEMES.get(self.theme_name, THEMES["light"])
+
+        popup = tk.Toplevel(self)
+        popup.overrideredirect(True)
+        popup.transient(self)
+        popup.configure(bg=theme["border"], borderwidth=0, highlightthickness=0)
+
+        container = tk.Frame(popup, bg=theme["border"], padx=1, pady=1, borderwidth=0, highlightthickness=0)
+        container.pack(fill="both", expand=True)
+
+        clear_item = tk.Label(
+            container,
+            text="清空",
+            anchor="w",
+            padx=18,
+            pady=7,
+            cursor="hand2",
+            bg=theme["panel"],
+            fg=theme["fg"],
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        clear_item.pack(fill="x")
+        clear_item.bind("<Enter>", lambda _event: clear_item.configure(bg=theme.get("menu_active_bg", theme["button_hover_bg"]), fg=theme.get("menu_active_fg", theme["fg"])))
+        clear_item.bind("<Leave>", lambda _event: clear_item.configure(bg=theme["panel"], fg=theme["fg"]))
+        clear_item.bind("<ButtonRelease-1>", lambda _event: self.clear_output_from_menu())
+
+        popup.bind("<Escape>", lambda _event: self.close_output_menu())
+        popup.bind("<FocusOut>", lambda _event: self.close_output_menu())
+        popup.geometry(f"+{event.x_root}+{event.y_root}")
+        popup.update_idletasks()
+        popup.focus_force()
+        self.output_menu_popup = popup
+
+    def clear_output_from_menu(self) -> None:
+        self.close_output_menu()
+        self.clear_sql_output()
+
+    def close_output_menu(self) -> None:
+        popup = getattr(self, "output_menu_popup", None)
+        if popup and popup.winfo_exists():
+            popup.destroy()
+        self.output_menu_popup = None
 
     def clear_sql_output(self) -> None:
         self.sql_text.delete("1.0", "end")
@@ -1216,17 +1253,7 @@ class SQLMonitorApp(tk.Tk):
         self.configure_text_tags()
         self.theme_link.configure(fg=theme["link"])
         self.latest_link.configure(fg=theme["link"])
-        self.safe_configure(
-            self.output_menu,
-            bg=theme["panel"],
-            fg=theme["fg"],
-            activebackground=theme.get("menu_active_bg", theme["button_bg"]),
-            activeforeground=theme.get("menu_active_fg", theme["fg"]),
-            disabledforeground=theme.get("button_disabled_fg", theme["muted_fg"]),
-            borderwidth=1,
-            activeborderwidth=0,
-            relief="solid",
-        )
+        self.close_output_menu()
 
     def apply_window_appearance(self, window: tk.Tk | tk.Toplevel | None = None) -> None:
         target = window or self
