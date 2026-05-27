@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.10"
+APP_VERSION = "v1.0.11"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -834,7 +834,7 @@ class SQLMonitorApp(tk.Tk):
         self.sql_text.bind("<Button-2>", self.show_output_menu)
         self.sql_text.bind("<Control-Button-1>", self.show_output_menu)
 
-    def show_output_menu(self, event: tk.Event) -> None:
+    def show_output_menu(self, event: tk.Event) -> str:
         self.close_output_menu()
         theme = THEMES.get(self.theme_name, THEMES["light"])
 
@@ -843,14 +843,21 @@ class SQLMonitorApp(tk.Tk):
         popup.transient(self)
         popup.configure(bg=theme["border"], borderwidth=0, highlightthickness=0)
 
-        container = tk.Frame(popup, bg=theme["border"], padx=1, pady=1, borderwidth=0, highlightthickness=0)
+        container = tk.Frame(
+            popup,
+            bg=theme["border"],
+            padx=1,
+            pady=1,
+            borderwidth=0,
+            highlightthickness=0,
+        )
         container.pack(fill="both", expand=True)
 
         clear_item = tk.Label(
             container,
-            text="清空",
+            text="清空输出窗口日志",
             anchor="w",
-            padx=18,
+            padx=16,
             pady=7,
             cursor="hand2",
             bg=theme["panel"],
@@ -859,26 +866,53 @@ class SQLMonitorApp(tk.Tk):
             highlightthickness=0,
         )
         clear_item.pack(fill="x")
-        clear_item.bind("<Enter>", lambda _event: clear_item.configure(bg=theme.get("menu_active_bg", theme["button_hover_bg"]), fg=theme.get("menu_active_fg", theme["fg"])))
+        clear_item.bind(
+            "<Enter>",
+            lambda _event: clear_item.configure(
+                bg=theme.get("menu_active_bg", theme["button_hover_bg"]),
+                fg=theme.get("menu_active_fg", theme["fg"]),
+            ),
+        )
         clear_item.bind("<Leave>", lambda _event: clear_item.configure(bg=theme["panel"], fg=theme["fg"]))
+        clear_item.bind("<ButtonPress-1>", lambda _event: "break")
         clear_item.bind("<ButtonRelease-1>", lambda _event: self.clear_output_from_menu())
 
         popup.bind("<Escape>", lambda _event: self.close_output_menu())
-        popup.bind("<FocusOut>", lambda _event: self.close_output_menu())
         popup.geometry(f"+{event.x_root}+{event.y_root}")
         popup.update_idletasks()
-        popup.focus_force()
+        popup.lift(self)
         self.output_menu_popup = popup
+        self.bind_all("<ButtonPress-1>", self.close_output_menu_on_outer_click, add="+")
+        return "break"
 
-    def clear_output_from_menu(self) -> None:
+    def clear_output_from_menu(self) -> str:
         self.close_output_menu()
         self.clear_sql_output()
+        return "break"
+
+    def close_output_menu_on_outer_click(self, event: tk.Event) -> None:
+        popup = getattr(self, "output_menu_popup", None)
+        if not popup or not popup.winfo_exists():
+            return
+
+        x = popup.winfo_rootx()
+        y = popup.winfo_rooty()
+        width = popup.winfo_width()
+        height = popup.winfo_height()
+        if x <= event.x_root <= x + width and y <= event.y_root <= y + height:
+            return
+
+        self.close_output_menu()
 
     def close_output_menu(self) -> None:
         popup = getattr(self, "output_menu_popup", None)
         if popup and popup.winfo_exists():
             popup.destroy()
         self.output_menu_popup = None
+        try:
+            self.unbind_all("<ButtonPress-1>")
+        except tk.TclError:
+            pass
 
     def clear_sql_output(self) -> None:
         self.sql_text.delete("1.0", "end")
