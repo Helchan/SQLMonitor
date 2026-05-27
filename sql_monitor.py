@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.3"
+APP_VERSION = "v1.0.6"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -44,6 +44,13 @@ DIRECT_PRINT_KEYWORDS = [
     "sqlId",
     "statement id",
     "MappedStatement",
+]
+WUSHAN_EXCLUDE_PATTERN_TEXTS: list[str] = [
+    r"^==>  Preparing:",
+    r"^==> Parameters:",
+]
+WUSHAN_EXCLUDE_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(pattern) for pattern in WUSHAN_EXCLUDE_PATTERN_TEXTS
 ]
 
 SQL_KEYWORDS = {
@@ -140,12 +147,17 @@ THEMES = {
 
 MYBATIS_PREPARING_RE = re.compile(r"==>\s+Preparing:\s*(?P<sql>.*)$")
 MYBATIS_PARAMETERS_RE = re.compile(r"==>\s+Parameters:\s*(?P<params>.*)$")
-SPRING_SQL_RE = re.compile(
-    r"JdbcTemplate\s*[: -]+.*?Executing prepared SQL statement\s*\[(?P<sql>.*)\]"
+SPRING_SQL_START_RE = re.compile(
+    r"JdbcTemplate\s*[: -]+.*?Executing prepared SQL statement\s*\[",
+    re.IGNORECASE,
 )
 SPRING_PARAM_RE = re.compile(
     r"Setting SQL statement parameter value:\s*column index\s+(?P<index>\d+),\s*"
     r"parameter value\s*\[(?P<value>.*?)\],\s*value class\s*\[(?P<class>.*?)\]",
+    re.IGNORECASE,
+)
+SPRING_LOG_START_RE = re.compile(
+    r"\b(?:DEBUG|TRACE|INFO|WARN|ERROR)\b\s+[^:]+:\s*-\s+",
     re.IGNORECASE,
 )
 
@@ -292,9 +304,15 @@ class SqlLogParser:
     def __init__(self, event_queue: queue.Queue[tuple[str, str]]) -> None:
         self.event_queue = event_queue
         self.pending: PendingSql | None = None
+        self.spring_sql_timestamp = ""
+        self.spring_sql_lines: list[str] = []
 
     def parse_line(self, line: str) -> None:
         timestamp, body = split_timestamp(line)
+
+        if self.is_collecting_spring_sql():
+            self.collect_spring_sql_line(body)
+            return
 
         if self.should_print_directly(body):
             self.emit_direct_line(timestamp, body)
@@ -313,11 +331,7 @@ class SqlLogParser:
                 self.pending = None
             return
 
-        if match := SPRING_SQL_RE.search(body):
-            self.pending = PendingSql("Spring JdbcTemplate", match.group("sql").strip(), {}, timestamp)
-            if self.pending.placeholder_count == 0:
-                self.emit_sql(self.pending.timestamp, self.pending.template)
-                self.pending = None
+        if self.try_start_spring_sql(timestamp, body):
             return
 
         if match := SPRING_PARAM_RE.search(body):
@@ -331,10 +345,56 @@ class SqlLogParser:
                     )
                     self.pending = None
 
+    def is_collecting_spring_sql(self) -> bool:
+        return bool(self.spring_sql_lines)
+
+    def try_start_spring_sql(self, timestamp: str, body: str) -> bool:
+        match = SPRING_SQL_START_RE.search(body)
+        if not match:
+            return False
+        self.spring_sql_timestamp = timestamp
+        self.spring_sql_lines = []
+        self.collect_spring_sql_line(body[match.end():])
+        return True
+
+    def collect_spring_sql_line(self, line: str) -> None:
+        sql_fragment, finished = self.extract_spring_sql_fragment(line)
+        self.spring_sql_lines.append(sql_fragment)
+        if finished:
+            template = "\n".join(self.spring_sql_lines).strip()
+            self.spring_sql_lines = []
+            self.pending = PendingSql("Spring JdbcTemplate", template, {}, self.spring_sql_timestamp or current_timestamp())
+            self.spring_sql_timestamp = ""
+            if self.pending.placeholder_count == 0:
+                self.emit_sql(self.pending.timestamp, self.pending.template)
+                self.pending = None
+
+    def extract_spring_sql_fragment(self, line: str) -> tuple[str, bool]:
+        end_index = self.find_spring_sql_end(line)
+        if end_index == -1:
+            return line, False
+        return line[:end_index], True
+
+    def find_spring_sql_end(self, line: str) -> int:
+        in_single = False
+        in_double = False
+        for index, char in enumerate(line):
+            next_char = line[index + 1] if index + 1 < len(line) else ""
+            if char == "'" and not in_double:
+                if in_single and next_char == "'":
+                    continue
+                in_single = not in_single
+            elif char == '"' and not in_single:
+                in_double = not in_double
+            elif char == "]" and not in_single and not in_double:
+                return index
+        return -1
+
     def emit_sql(self, timestamp: str, sql: str) -> None:
         normalized = " ".join(sql.split())
         if normalized:
-            self.put_event(("sql", f"{timestamp} {normalized};"))
+            suffix = "" if normalized.endswith(";") else ";"
+            self.put_event(("sql", f"{timestamp} {normalized}{suffix}"))
 
     def emit_direct_line(self, timestamp: str, line: str) -> None:
         normalized = " ".join(line.split())
@@ -390,15 +450,13 @@ class Analyzer(threading.Thread):
         line_queue: queue.Queue[str],
         event_queue: queue.Queue[tuple[str, str]],
         stop_event: threading.Event,
-        exclude_provider=None,
+        wushan_exclude_enabled_provider=None,
     ) -> None:
         super().__init__(daemon=True)
         self.line_queue = line_queue
         self.event_queue = event_queue
         self.stop_event = stop_event
-        self.exclude_provider = exclude_provider
-        self.exclude_text = ""
-        self.exclude_pattern: re.Pattern[str] | None = None
+        self.wushan_exclude_enabled_provider = wushan_exclude_enabled_provider
         self.parser = SqlLogParser(event_queue)
 
     def run(self) -> None:
@@ -412,34 +470,17 @@ class Analyzer(threading.Thread):
             self.line_queue.task_done()
 
     def should_exclude(self, line: str) -> bool:
-        text = self.current_exclude_text()
-        if not text:
+        if not self.is_wushan_exclude_enabled():
             return False
-        pattern = self.current_exclude_pattern(text)
-        if pattern:
-            try:
-                return bool(pattern.search(line))
-            except re.error:
-                pass
-        return text.lower() in line.lower()
+        return any(pattern.search(line) for pattern in WUSHAN_EXCLUDE_PATTERNS)
 
-    def current_exclude_text(self) -> str:
-        if not self.exclude_provider:
-            return ""
+    def is_wushan_exclude_enabled(self) -> bool:
+        if not self.wushan_exclude_enabled_provider:
+            return False
         try:
-            return str(self.exclude_provider()).strip()
+            return bool(self.wushan_exclude_enabled_provider())
         except Exception:
-            return ""
-
-    def current_exclude_pattern(self, text: str) -> re.Pattern[str] | None:
-        if text == self.exclude_text:
-            return self.exclude_pattern
-        self.exclude_text = text
-        try:
-            self.exclude_pattern = re.compile(text, re.IGNORECASE)
-        except re.error:
-            self.exclude_pattern = None
-        return self.exclude_pattern
+            return False
 
 
 class ThemedScrollbar(tk.Canvas):
@@ -544,8 +585,7 @@ class SQLMonitorApp(tk.Tk):
         self.max_log_var = tk.StringVar(value=DEFAULT_MAX_LOG_COUNT)
         self.status_var = tk.StringVar(value="准备")
         self.search_var = tk.StringVar()
-        self.exclude_var = tk.StringVar()
-        self.exclude_text = ""
+        self.exclude_wushan_var = tk.BooleanVar(value=False)
         self.last_normal_geometry = str(self.config_data.get("geometry", DEFAULT_GEOMETRY))
 
         self.stop_event: threading.Event | None = None
@@ -559,17 +599,16 @@ class SQLMonitorApp(tk.Tk):
         self.status_frame_index = 0
         self.status_animation_job: str | None = None
         self.search_entry: tk.Entry | None = None
-        self.exclude_entry: tk.Entry | None = None
         self.theme_widgets: list[tk.Widget] = []
         self.button_widgets: list[tk.Label] = []
         self.entry_widgets: list[tk.Entry] = []
+        self.checkbutton_widgets: list[tk.Checkbutton] = []
         self.button_commands: dict[tk.Label, object] = {}
 
         self.configure_grid()
         self.build_controls()
         self.build_output_windows()
         self.search_var.trace_add("write", lambda *_args: self.highlight_search())
-        self.exclude_var.trace_add("write", self.update_exclude_text)
         self.restore_config()
         self.apply_theme()
         self.update_button_states()
@@ -610,14 +649,14 @@ class SQLMonitorApp(tk.Tk):
         self.theme_widgets.append(label_frame)
 
         self.add_label(label_frame, "SQL输出窗口").grid(row=0, column=0, sticky="w")
-        self.add_label(label_frame, "搜索日志：").grid(row=0, column=2, padx=(12, 4), sticky="e")
-        self.search_entry = self.add_entry(label_frame, self.search_var, width=24)
-        self.search_entry.grid(row=0, column=3, sticky="e")
-        self.search_entry.bind("<Return>", lambda _event: self.focus_next_match())
 
-        self.add_label(label_frame, "屏蔽日志(支持正则)：").grid(row=0, column=4, padx=(12, 4), sticky="e")
-        self.exclude_entry = self.add_entry(label_frame, self.exclude_var, width=28)
-        self.exclude_entry.grid(row=0, column=5, sticky="e")
+        self.exclude_wushan_check = self.add_checkbutton(label_frame, "屏蔽巫山", self.exclude_wushan_var)
+        self.exclude_wushan_check.grid(row=0, column=2, padx=(12, 10), sticky="e")
+
+        self.add_label(label_frame, "搜索日志：").grid(row=0, column=3, padx=(0, 4), sticky="e")
+        self.search_entry = self.add_entry(label_frame, self.search_var, width=24)
+        self.search_entry.grid(row=0, column=4, sticky="e")
+        self.search_entry.bind("<Return>", lambda _event: self.focus_next_match())
 
         self.sql_text = self.create_scrolled_text(row=2)
         self.create_output_menu()
@@ -710,6 +749,22 @@ class SQLMonitorApp(tk.Tk):
         self.theme_widgets.append(entry)
         self.entry_widgets.append(entry)
         return entry
+
+    def add_checkbutton(self, parent: tk.Widget, text: str, variable: tk.BooleanVar) -> tk.Checkbutton:
+        checkbutton = tk.Checkbutton(
+            parent,
+            text=text,
+            variable=variable,
+            cursor="hand2",
+            padx=0,
+            pady=0,
+            borderwidth=0,
+            highlightthickness=0,
+            takefocus=True,
+        )
+        self.theme_widgets.append(checkbutton)
+        self.checkbutton_widgets.append(checkbutton)
+        return checkbutton
 
     def add_button(self, parent: tk.Widget, text: str, command) -> tk.Label:
         button = tk.Label(
@@ -810,7 +865,7 @@ class SQLMonitorApp(tk.Tk):
         self.line_queue = queue.Queue(maxsize=LINE_QUEUE_SIZE)
         self.event_queue = queue.Queue(maxsize=EVENT_QUEUE_SIZE)
         self.reader = TailReader(path, self.line_queue, self.stop_event)
-        self.analyzer = Analyzer(self.line_queue, self.event_queue, self.stop_event, self.get_exclude_text)
+        self.analyzer = Analyzer(self.line_queue, self.event_queue, self.stop_event, self.is_wushan_exclude_enabled)
         self.analyzer.start()
         self.reader.start()
         self.listening = True
@@ -1089,11 +1144,8 @@ class SQLMonitorApp(tk.Tk):
         self.sql_text.see(next_match)
         self.auto_scroll = self.is_sql_scrolled_to_bottom()
 
-    def update_exclude_text(self, *_args) -> None:
-        self.exclude_text = self.exclude_var.get().strip()
-
-    def get_exclude_text(self) -> str:
-        return self.exclude_text
+    def is_wushan_exclude_enabled(self) -> bool:
+        return bool(self.exclude_wushan_var.get())
 
     def validate_digits(self, value: str) -> bool:
         return value == "" or value.isdigit()
@@ -1144,6 +1196,15 @@ class SQLMonitorApp(tk.Tk):
                     borderwidth=1,
                     relief="solid",
                     highlightthickness=1,
+                )
+            elif widget in self.checkbutton_widgets:
+                self.safe_configure(
+                    widget,
+                    bg=theme["panel"],
+                    fg=theme["fg"],
+                    activebackground=theme["panel"],
+                    activeforeground=theme["fg"],
+                    selectcolor=theme.get("entry_bg", theme["panel"]),
                 )
             elif widget in self.button_widgets:
                 self.apply_button_style(widget)
@@ -1219,7 +1280,7 @@ class SQLMonitorApp(tk.Tk):
         self.path_var.set(str(self.config_data.get("log_path", "")))
         saved_count = self.config_data.get("max_log_count", self.config_data.get("max_sql_count", DEFAULT_MAX_LOG_COUNT))
         self.max_log_var.set(str(saved_count or DEFAULT_MAX_LOG_COUNT))
-        self.exclude_var.set(str(self.config_data.get("exclude_log", "")))
+        self.exclude_wushan_var.set(bool(self.config_data.get("exclude_wushan", False)))
         if "geometry" in self.config_data:
             self.geometry(self.last_normal_geometry)
         else:
@@ -1249,7 +1310,7 @@ class SQLMonitorApp(tk.Tk):
         data = {
             "log_path": self.path_var.get().strip(),
             "max_log_count": self.max_log_var.get().strip() or DEFAULT_MAX_LOG_COUNT,
-            "exclude_log": self.exclude_var.get().strip(),
+            "exclude_wushan": self.exclude_wushan_var.get(),
             "theme": self.theme_name,
             "maximized": maximized,
             "geometry": self.last_normal_geometry if maximized else self.geometry(),
