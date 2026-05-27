@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.9"
+APP_VERSION = "v1.0.10"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -104,42 +104,42 @@ THEMES = {
         "link": "#0b63ce",
     },
     "dark": {
-        # IntelliJ IDEA / JetBrains New UI style: low-contrast dark surface with
-        # softened foregrounds. Avoid pure white and high-saturation accent colors
-        # in the console area so long-running SQL logs are easier on the eyes.
-        "bg": "#1e1f22",
-        "panel": "#2b2d30",
-        "surface": "#34373d",
-        "fg": "#b3b8c0",
-        "muted_fg": "#7f858e",
-        "entry_bg": "#1e1f22",
-        "entry_fg": "#b3b8c0",
-        "text_bg": "#1e1f22",
-        "text_fg": "#a9b1ba",
-        "button_bg": "#34373d",
-        "button_hover_bg": "#3f4248",
-        "button_disabled_bg": "#2b2d30",
-        "button_disabled_fg": "#747b84",
-        "button_fg": "#b3b8c0",
-        "border": "#3c3f44",
-        "active_border": "#4f6f93",
-        "select_bg": "#3a4756",
-        "select_fg": "#c3c7ce",
-        "search_bg": "#4a4329",
-        "search_fg": "#c7c0ad",
-        "search_current_bg": "#5a4c2d",
-        "search_current_fg": "#d0c6ad",
-        "timestamp_fg": "#7c838d",
-        "sql_keyword_fg": "#6d8fb3",
-        "sql_type_fg": "#6f9f96",
-        "sql_function_fg": "#b4a36f",
-        "sql_string_fg": "#b78372",
-        "sql_number_fg": "#8096b4",
-        "sql_comment_fg": "#6f7782",
-        "sql_operator_fg": "#8d949d",
-        "menu_active_bg": "#3a3d43",
-        "menu_active_fg": "#c0c4cb",
-        "link": "#7394b8",
+        # Soft Darcula-like console palette. The output area intentionally uses
+        # muted foregrounds and lower saturation than editor syntax colors to
+        # avoid glare during continuous log monitoring.
+        "bg": "#202124",
+        "panel": "#2a2c2f",
+        "surface": "#303236",
+        "fg": "#9aa0a6",
+        "muted_fg": "#70777f",
+        "entry_bg": "#202124",
+        "entry_fg": "#9aa0a6",
+        "text_bg": "#202124",
+        "text_fg": "#8f969e",
+        "button_bg": "#303236",
+        "button_hover_bg": "#393c40",
+        "button_disabled_bg": "#2a2c2f",
+        "button_disabled_fg": "#666d75",
+        "button_fg": "#9aa0a6",
+        "border": "#35383d",
+        "active_border": "#425b78",
+        "select_bg": "#333b46",
+        "select_fg": "#a9afb6",
+        "search_bg": "#403927",
+        "search_fg": "#aaa088",
+        "search_current_bg": "#4a4029",
+        "search_current_fg": "#b6aa90",
+        "timestamp_fg": "#6f8f66",
+        "sql_keyword_fg": "#5f7f9f",
+        "sql_type_fg": "#608f88",
+        "sql_function_fg": "#9d9066",
+        "sql_string_fg": "#9f7167",
+        "sql_number_fg": "#74869d",
+        "sql_comment_fg": "#626a72",
+        "sql_operator_fg": "#747b83",
+        "menu_active_bg": "#35383d",
+        "menu_active_fg": "#a4aab1",
+        "link": "#6685a6",
     },
 }
 
