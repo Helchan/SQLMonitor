@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.7"
+APP_VERSION = "v1.0.8"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -107,36 +107,36 @@ THEMES = {
         "bg": "#0d1117",
         "panel": "#161b22",
         "surface": "#21262d",
-        "fg": "#c9d1d9",
+        "fg": "#b9c2cc",
         "muted_fg": "#8b949e",
         "entry_bg": "#0d1117",
-        "entry_fg": "#e6edf3",
+        "entry_fg": "#c9d1d9",
         "text_bg": "#0b0f14",
-        "text_fg": "#dbe7f3",
+        "text_fg": "#bcc6d0",
         "button_bg": "#21262d",
         "button_hover_bg": "#30363d",
         "button_disabled_bg": "#161b22",
         "button_disabled_fg": "#6e7681",
-        "button_fg": "#f0f6fc",
+        "button_fg": "#c9d1d9",
         "border": "#30363d",
         "active_border": "#58a6ff",
         "select_bg": "#264f78",
-        "select_fg": "#ffffff",
+        "select_fg": "#d8dee9",
         "search_bg": "#664d00",
-        "search_fg": "#ffffff",
+        "search_fg": "#e6edf3",
         "search_current_bg": "#b7791f",
-        "search_current_fg": "#ffffff",
-        "timestamp_fg": "#6e7681",
-        "sql_keyword_fg": "#569cd6",
-        "sql_type_fg": "#4ec9b0",
-        "sql_function_fg": "#dcdcaa",
-        "sql_string_fg": "#ce9178",
-        "sql_number_fg": "#2aacb8",
+        "search_current_fg": "#f0e6d2",
+        "timestamp_fg": "#7d8590",
+        "sql_keyword_fg": "#6f9fd2",
+        "sql_type_fg": "#7fb8aa",
+        "sql_function_fg": "#c7b985",
+        "sql_string_fg": "#c58b7f",
+        "sql_number_fg": "#7aa8b7",
         "sql_comment_fg": "#7a7e85",
-        "sql_operator_fg": "#b9c0c9",
+        "sql_operator_fg": "#9da7b3",
         "menu_active_bg": "#2f3847",
-        "menu_active_fg": "#f0f6fc",
-        "link": "#58a6ff",
+        "menu_active_fg": "#d8dee9",
+        "link": "#7da9d9",
     },
 }
 
