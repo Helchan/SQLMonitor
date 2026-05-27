@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.2"
+APP_VERSION = "v1.0.3"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -124,10 +124,10 @@ THEMES = {
         "search_current_bg": "#b7791f",
         "search_current_fg": "#ffffff",
         "timestamp_fg": "#6e7681",
-        "sql_keyword_fg": "#cf8e6d",
-        "sql_type_fg": "#56a8f5",
+        "sql_keyword_fg": "#569cd6",
+        "sql_type_fg": "#4ec9b0",
         "sql_function_fg": "#dcdcaa",
-        "sql_string_fg": "#6aab73",
+        "sql_string_fg": "#ce9178",
         "sql_number_fg": "#2aacb8",
         "sql_comment_fg": "#7a7e85",
         "sql_operator_fg": "#b9c0c9",
@@ -390,11 +390,15 @@ class Analyzer(threading.Thread):
         line_queue: queue.Queue[str],
         event_queue: queue.Queue[tuple[str, str]],
         stop_event: threading.Event,
+        exclude_provider=None,
     ) -> None:
         super().__init__(daemon=True)
         self.line_queue = line_queue
         self.event_queue = event_queue
         self.stop_event = stop_event
+        self.exclude_provider = exclude_provider
+        self.exclude_text = ""
+        self.exclude_pattern: re.Pattern[str] | None = None
         self.parser = SqlLogParser(event_queue)
 
     def run(self) -> None:
@@ -403,8 +407,39 @@ class Analyzer(threading.Thread):
                 line = self.line_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
-            self.parser.parse_line(line)
+            if not self.should_exclude(line):
+                self.parser.parse_line(line)
             self.line_queue.task_done()
+
+    def should_exclude(self, line: str) -> bool:
+        text = self.current_exclude_text()
+        if not text:
+            return False
+        pattern = self.current_exclude_pattern(text)
+        if pattern:
+            try:
+                return bool(pattern.search(line))
+            except re.error:
+                pass
+        return text.lower() in line.lower()
+
+    def current_exclude_text(self) -> str:
+        if not self.exclude_provider:
+            return ""
+        try:
+            return str(self.exclude_provider()).strip()
+        except Exception:
+            return ""
+
+    def current_exclude_pattern(self, text: str) -> re.Pattern[str] | None:
+        if text == self.exclude_text:
+            return self.exclude_pattern
+        self.exclude_text = text
+        try:
+            self.exclude_pattern = re.compile(text, re.IGNORECASE)
+        except re.error:
+            self.exclude_pattern = None
+        return self.exclude_pattern
 
 
 class ThemedScrollbar(tk.Canvas):
@@ -509,6 +544,8 @@ class SQLMonitorApp(tk.Tk):
         self.max_log_var = tk.StringVar(value=DEFAULT_MAX_LOG_COUNT)
         self.status_var = tk.StringVar(value="准备")
         self.search_var = tk.StringVar()
+        self.exclude_var = tk.StringVar()
+        self.exclude_text = ""
         self.last_normal_geometry = str(self.config_data.get("geometry", DEFAULT_GEOMETRY))
 
         self.stop_event: threading.Event | None = None
@@ -521,8 +558,8 @@ class SQLMonitorApp(tk.Tk):
         self.listening = False
         self.status_frame_index = 0
         self.status_animation_job: str | None = None
-        self.search_window: tk.Toplevel | None = None
         self.search_entry: tk.Entry | None = None
+        self.exclude_entry: tk.Entry | None = None
         self.theme_widgets: list[tk.Widget] = []
         self.button_widgets: list[tk.Label] = []
         self.entry_widgets: list[tk.Entry] = []
@@ -531,6 +568,8 @@ class SQLMonitorApp(tk.Tk):
         self.configure_grid()
         self.build_controls()
         self.build_output_windows()
+        self.search_var.trace_add("write", lambda *_args: self.highlight_search())
+        self.exclude_var.trace_add("write", self.update_exclude_text)
         self.restore_config()
         self.apply_theme()
         self.update_button_states()
@@ -567,8 +606,19 @@ class SQLMonitorApp(tk.Tk):
     def build_output_windows(self) -> None:
         label_frame = tk.Frame(self, padx=8, pady=4)
         label_frame.grid(row=1, column=0, sticky="ew")
+        label_frame.columnconfigure(1, weight=1)
         self.theme_widgets.append(label_frame)
-        self.add_label(label_frame, "SQL输出窗口").pack(anchor="w")
+
+        self.add_label(label_frame, "SQL输出窗口").grid(row=0, column=0, sticky="w")
+        self.add_label(label_frame, "搜索日志：").grid(row=0, column=2, padx=(12, 4), sticky="e")
+        self.search_entry = self.add_entry(label_frame, self.search_var, width=24)
+        self.search_entry.grid(row=0, column=3, sticky="e")
+        self.search_entry.bind("<Return>", lambda _event: self.focus_next_match())
+
+        self.add_label(label_frame, "屏蔽日志(支持正则)：").grid(row=0, column=4, padx=(12, 4), sticky="e")
+        self.exclude_entry = self.add_entry(label_frame, self.exclude_var, width=28)
+        self.exclude_entry.grid(row=0, column=5, sticky="e")
+
         self.sql_text = self.create_scrolled_text(row=2)
         self.create_output_menu()
         self.configure_text_tags()
@@ -621,9 +671,26 @@ class SQLMonitorApp(tk.Tk):
         text.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.theme_widgets.extend([text, scrollbar])
-        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>", "<KeyRelease>", "<ButtonRelease-1>"):
+        text.bind("<MouseWheel>", self.on_sql_mouse_wheel)
+        text.bind("<Button-4>", self.on_sql_mouse_wheel)
+        text.bind("<Button-5>", self.on_sql_mouse_wheel)
+        for sequence in ("<KeyRelease>", "<ButtonRelease-1>"):
             text.bind(sequence, lambda _event: self.after_idle(self.refresh_auto_scroll), add=True)
         return text
+
+    def on_sql_mouse_wheel(self, event: tk.Event) -> str:
+        if getattr(event, "num", None) == 4:
+            self.sql_text.yview_scroll(-2, "units")
+        elif getattr(event, "num", None) == 5:
+            self.sql_text.yview_scroll(2, "units")
+        else:
+            delta = getattr(event, "delta", 0)
+            if delta:
+                step = -1 if delta > 0 else 1
+                units = max(2, abs(delta) // 120 * 2)
+                self.sql_text.yview_scroll(step * units, "units")
+        self.after_idle(self.refresh_auto_scroll)
+        return "break"
 
     def console_font(self) -> tuple[str, int]:
         system = platform.system()
@@ -708,7 +775,7 @@ class SQLMonitorApp(tk.Tk):
         return link
 
     def create_output_menu(self) -> None:
-        self.output_menu = tk.Menu(self.sql_text, tearoff=0, borderwidth=0, activeborderwidth=0, relief="flat")
+        self.output_menu = tk.Menu(self.sql_text, tearoff=0, borderwidth=1, activeborderwidth=0, relief="solid")
         self.output_menu.add_command(label="搜索", command=lambda: self.open_search(None))
         self.output_menu.add_command(label="清空", command=self.clear_sql_output)
         self.sql_text.bind("<Button-3>", self.show_output_menu)
@@ -743,7 +810,7 @@ class SQLMonitorApp(tk.Tk):
         self.line_queue = queue.Queue(maxsize=LINE_QUEUE_SIZE)
         self.event_queue = queue.Queue(maxsize=EVENT_QUEUE_SIZE)
         self.reader = TailReader(path, self.line_queue, self.stop_event)
-        self.analyzer = Analyzer(self.line_queue, self.event_queue, self.stop_event)
+        self.analyzer = Analyzer(self.line_queue, self.event_queue, self.stop_event, self.get_exclude_text)
         self.analyzer.start()
         self.reader.start()
         self.listening = True
@@ -968,45 +1035,14 @@ class SQLMonitorApp(tk.Tk):
         self.sql_text.tag_raise("search_current")
 
     def open_search(self, event: tk.Event | None) -> str:
-        if self.search_window and self.search_window.winfo_exists():
-            self.search_window.deiconify()
-            self.search_window.lift()
-            if self.search_entry:
-                self.search_entry.focus_set()
-                self.search_entry.select_range(0, "end")
-            return "break"
-
-        self.search_window = tk.Toplevel(self)
-        self.search_window.title("搜索日志")
-        self.search_window.resizable(False, False)
-        self.search_window.transient(self)
-        self.search_window.protocol("WM_DELETE_WINDOW", self.close_search)
-        self.search_window.bind("<Escape>", lambda _event: self.close_search())
-        self.search_window.bind("<Return>", lambda _event: self.focus_next_match())
-
-        frame = tk.Frame(self.search_window, padx=10, pady=10)
-        frame.grid(row=0, column=0, sticky="nsew")
-        self.theme_widgets.append(frame)
-        label = self.add_label(frame, "关键词")
-        label.grid(row=0, column=0, padx=(0, 6), sticky="w")
-        self.search_entry = self.add_entry(frame, self.search_var, width=34)
-        self.search_entry.grid(row=0, column=1, sticky="ew")
-        close_button = self.add_button(frame, "关闭", self.close_search)
-        close_button.grid(row=0, column=2, padx=(8, 0))
-        self.search_var.trace_add("write", lambda *_args: self.highlight_search())
-        self.apply_theme()
-        self.search_entry.focus_set()
-        self.search_entry.select_range(0, "end")
-        self.highlight_search()
+        if self.search_entry:
+            self.search_entry.focus_set()
+            self.search_entry.select_range(0, "end")
         return "break"
 
     def close_search(self) -> None:
         self.clear_search_highlight()
         self.search_var.set("")
-        if self.search_window and self.search_window.winfo_exists():
-            self.search_window.destroy()
-        self.search_window = None
-        self.search_entry = None
 
     def clear_search_highlight(self) -> None:
         self.sql_text.tag_remove("search_match", "1.0", "end")
@@ -1052,6 +1088,12 @@ class SQLMonitorApp(tk.Tk):
         self.sql_text.tag_add("search_current", next_match, f"{next_match}+{len(keyword)}c")
         self.sql_text.see(next_match)
         self.auto_scroll = self.is_sql_scrolled_to_bottom()
+
+    def update_exclude_text(self, *_args) -> None:
+        self.exclude_text = self.exclude_var.get().strip()
+
+    def get_exclude_text(self) -> str:
+        return self.exclude_text
 
     def validate_digits(self, value: str) -> bool:
         return value == "" or value.isdigit()
@@ -1120,13 +1162,10 @@ class SQLMonitorApp(tk.Tk):
             activebackground=theme.get("menu_active_bg", theme["button_bg"]),
             activeforeground=theme.get("menu_active_fg", theme["fg"]),
             disabledforeground=theme.get("button_disabled_fg", theme["muted_fg"]),
-            borderwidth=0,
+            borderwidth=1,
             activeborderwidth=0,
-            relief="flat",
+            relief="solid",
         )
-        if self.search_window and self.search_window.winfo_exists():
-            self.search_window.configure(bg=theme["panel"])
-            self.apply_window_appearance(self.search_window)
 
     def apply_window_appearance(self, window: tk.Tk | tk.Toplevel | None = None) -> None:
         target = window or self
@@ -1180,6 +1219,7 @@ class SQLMonitorApp(tk.Tk):
         self.path_var.set(str(self.config_data.get("log_path", "")))
         saved_count = self.config_data.get("max_log_count", self.config_data.get("max_sql_count", DEFAULT_MAX_LOG_COUNT))
         self.max_log_var.set(str(saved_count or DEFAULT_MAX_LOG_COUNT))
+        self.exclude_var.set(str(self.config_data.get("exclude_log", "")))
         if "geometry" in self.config_data:
             self.geometry(self.last_normal_geometry)
         else:
@@ -1209,6 +1249,7 @@ class SQLMonitorApp(tk.Tk):
         data = {
             "log_path": self.path_var.get().strip(),
             "max_log_count": self.max_log_var.get().strip() or DEFAULT_MAX_LOG_COUNT,
+            "exclude_log": self.exclude_var.get().strip(),
             "theme": self.theme_name,
             "maximized": maximized,
             "geometry": self.last_normal_geometry if maximized else self.geometry(),
