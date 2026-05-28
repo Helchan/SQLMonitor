@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.15"
+APP_VERSION = "v1.0.16"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -76,6 +76,7 @@ THEMES = {
         "bg": "#f1f2f4",
         "panel": "#f1f2f4",
         "titlebar_bg": "#f1f2f4",
+        "titlebar_separator": "#d8dde5",
         "fg": "#222222",
         "muted_fg": "#69707a",
         "entry_bg": "#ffffff",
@@ -115,6 +116,7 @@ THEMES = {
         "bg": "#2a2c2f",
         "panel": "#2a2c2f",
         "titlebar_bg": "#2a2c2f",
+        "titlebar_separator": "#3a3d42",
         "surface": "#303236",
         "fg": "#9aa0a6",
         "muted_fg": "#70777f",
@@ -608,9 +610,11 @@ class SQLMonitorApp(tk.Tk):
         self.button_widgets: list[tk.Label] = []
         self.entry_widgets: list[tk.Entry] = []
         self.checkbutton_widgets: list[tk.Checkbutton] = []
+        self.titlebar_separator: tk.Frame | None = None
         self.button_commands: dict[tk.Label, object] = {}
 
         self.configure_grid()
+        self.build_titlebar_separator()
         self.build_controls()
         self.build_output_windows()
         self.search_var.trace_add("write", lambda *_args: self.highlight_search())
@@ -625,11 +629,15 @@ class SQLMonitorApp(tk.Tk):
 
     def configure_grid(self) -> None:
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
+
+    def build_titlebar_separator(self) -> None:
+        self.titlebar_separator = tk.Frame(self, height=1, borderwidth=0, highlightthickness=0)
+        self.titlebar_separator.grid(row=0, column=0, sticky="ew")
 
     def build_controls(self) -> None:
         frame = tk.Frame(self, padx=8, pady=8)
-        frame.grid(row=0, column=0, sticky="ew")
+        frame.grid(row=1, column=0, sticky="ew")
         frame.columnconfigure(1, weight=1)
         self.theme_widgets.append(frame)
 
@@ -649,7 +657,7 @@ class SQLMonitorApp(tk.Tk):
 
     def build_output_windows(self) -> None:
         label_frame = tk.Frame(self, padx=8, pady=4)
-        label_frame.grid(row=1, column=0, sticky="ew")
+        label_frame.grid(row=2, column=0, sticky="ew")
         label_frame.columnconfigure(1, weight=1)
         self.theme_widgets.append(label_frame)
 
@@ -663,14 +671,14 @@ class SQLMonitorApp(tk.Tk):
         self.search_entry.grid(row=0, column=4, sticky="e")
         self.search_entry.bind("<Return>", lambda _event: self.focus_next_match())
 
-        self.sql_text = self.create_scrolled_text(row=2)
+        self.sql_text = self.create_scrolled_text(row=3)
         self.create_output_menu()
         self.configure_text_tags()
         self.build_status_bar()
 
     def build_status_bar(self) -> None:
         status_frame = tk.Frame(self, padx=8, pady=5)
-        status_frame.grid(row=3, column=0, sticky="ew")
+        status_frame.grid(row=4, column=0, sticky="ew")
         status_frame.columnconfigure(0, weight=1)
         self.theme_widgets.append(status_frame)
 
@@ -1293,6 +1301,9 @@ class SQLMonitorApp(tk.Tk):
         theme = THEMES.get(self.theme_name, THEMES["light"])
         self.configure(bg=theme["bg"])
         self.apply_window_appearance()
+
+        if self.titlebar_separator is not None:
+            self.safe_configure(self.titlebar_separator, bg=theme.get("titlebar_separator", theme["border"]))
 
         for widget in self.theme_widgets:
             if isinstance(widget, tk.Text):
