@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "SQL Monitor"
-APP_VERSION = "v1.0.13"
+APP_VERSION = "v1.0.15"
 APP_BRAND = "菜鸟驿站出品"
 THEME_TOGGLE_TEXT = "切换主题"
 LATEST_VERSION_TEXT = "获取最新版本"
@@ -75,6 +75,7 @@ THEMES = {
     "light": {
         "bg": "#f1f2f4",
         "panel": "#f1f2f4",
+        "titlebar_bg": "#f1f2f4",
         "fg": "#222222",
         "muted_fg": "#69707a",
         "entry_bg": "#ffffff",
@@ -111,8 +112,9 @@ THEMES = {
         # Soft Darcula-like console palette. The output area intentionally uses
         # muted foregrounds and lower saturation than editor syntax colors to
         # avoid glare during continuous log monitoring.
-        "bg": "#202124",
+        "bg": "#2a2c2f",
         "panel": "#2a2c2f",
+        "titlebar_bg": "#2a2c2f",
         "surface": "#303236",
         "fg": "#9aa0a6",
         "muted_fg": "#70777f",
@@ -857,9 +859,27 @@ class SQLMonitorApp(tk.Tk):
         )
         container.pack(fill="both", expand=True)
 
-        clear_item = tk.Label(
-            container,
-            text="清空输出窗口日志",
+        self.add_output_menu_item(container, theme, "复制", self.copy_output_from_menu)
+        self.add_output_menu_item(container, theme, "清空", self.clear_output_from_menu)
+
+        popup.bind("<Escape>", lambda _event: self.close_output_menu())
+        popup.geometry(f"+{event.x_root}+{event.y_root}")
+        popup.update_idletasks()
+        popup.lift(self)
+        self.output_menu_popup = popup
+        self.bind_all("<ButtonPress-1>", self.close_output_menu_on_outer_click, add="+")
+        return "break"
+
+    def add_output_menu_item(
+        self,
+        parent: tk.Widget,
+        theme: dict[str, str],
+        text: str,
+        command: Callable[[], str],
+    ) -> None:
+        item = tk.Label(
+            parent,
+            text=text,
             anchor="w",
             padx=16,
             pady=7,
@@ -869,24 +889,29 @@ class SQLMonitorApp(tk.Tk):
             borderwidth=0,
             highlightthickness=0,
         )
-        clear_item.pack(fill="x")
-        clear_item.bind(
+        item.pack(fill="x")
+        item.bind(
             "<Enter>",
-            lambda _event: clear_item.configure(
+            lambda _event: item.configure(
                 bg=theme.get("menu_active_bg", theme["button_hover_bg"]),
                 fg=theme.get("menu_active_fg", theme["fg"]),
             ),
         )
-        clear_item.bind("<Leave>", lambda _event: clear_item.configure(bg=theme["panel"], fg=theme["fg"]))
-        clear_item.bind("<ButtonPress-1>", lambda _event: "break")
-        clear_item.bind("<ButtonRelease-1>", lambda _event: self.clear_output_from_menu())
+        item.bind("<Leave>", lambda _event: item.configure(bg=theme["panel"], fg=theme["fg"]))
+        item.bind("<ButtonPress-1>", lambda _event: "break")
+        item.bind("<ButtonRelease-1>", lambda _event: command())
 
-        popup.bind("<Escape>", lambda _event: self.close_output_menu())
-        popup.geometry(f"+{event.x_root}+{event.y_root}")
-        popup.update_idletasks()
-        popup.lift(self)
-        self.output_menu_popup = popup
-        self.bind_all("<ButtonPress-1>", self.close_output_menu_on_outer_click, add="+")
+    def copy_output_from_menu(self) -> str:
+        try:
+            content = self.sql_text.get("sel.first", "sel.last")
+        except tk.TclError:
+            content = self.sql_text.get("1.0", "end-1c")
+
+        if content:
+            self.clipboard_clear()
+            self.clipboard_append(content)
+
+        self.close_output_menu()
         return "break"
 
     def clear_output_from_menu(self) -> str:
@@ -1352,8 +1377,28 @@ class SQLMonitorApp(tk.Tk):
                 )
                 if result == 0:
                     break
+
+            theme = THEMES.get(self.theme_name, THEMES["light"])
+            caption_color = self.hex_to_windows_color(theme.get("titlebar_bg", theme["panel"]))
+            color_value = ctypes.c_int(caption_color)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd,
+                35,
+                ctypes.byref(color_value),
+                ctypes.sizeof(color_value),
+            )
         except Exception:
             return
+
+    @staticmethod
+    def hex_to_windows_color(color: str) -> int:
+        normalized = color.strip().lstrip("#")
+        if len(normalized) != 6:
+            return 0
+        red = int(normalized[0:2], 16)
+        green = int(normalized[2:4], 16)
+        blue = int(normalized[4:6], 16)
+        return red | (green << 8) | (blue << 16)
 
     def safe_configure(self, widget: tk.Widget, **options: str | int) -> None:
         for key, value in options.items():
